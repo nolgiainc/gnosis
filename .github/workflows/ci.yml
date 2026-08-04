@@ -6,6 +6,13 @@ on:
     branches:
       - main
 
+# The artifact-registry job below pushes the moving :latest tag the agent
+# fleet deploys; serialize per ref so overlapping merges cannot interleave
+# half-pushed manifests, and never cancel mid-push.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -64,3 +71,60 @@ jobs:
           tags: |
             ghcr.io/nolgiainc/gnosis:latest
             ghcr.io/nolgiainc/gnosis:sha-${{ github.sha }}
+
+  # Push the image the agent fleet actually deploys (NOL-404). Provisioned
+  # agents pull the same-project Artifact Registry gnosis:latest (infra
+  # envs/*/agents.tf gnosis_image_repository; gnosis_image_tag defaults to
+  # "latest"), NOT ghcr.io — the ghcr job above only feeds the chart's
+  # non-GCP default. Before this job, AR was refreshed by a manually
+  # dispatched mirror in nolgia-agent images.yml, and prod silently ran a
+  # month-stale build. Mirrors hermes-agent nolgia-images.yml: keyless WIF
+  # auth as gha-agent-images (infra envs/*/wif.tf binds this repo's main).
+  # Rollout is NOT done here: the agent-provisioner reconciler installs
+  # :latest with pullPolicy Always; running pods pick it up on their next
+  # roll.
+  artifact-registry:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    # stays hosted: needs docker daemon
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      # Envs are independent: prod auth failing must not cancel stg.
+      fail-fast: false
+      matrix:
+        include:
+          - env: stg
+            project: nolgia-web-stg
+          - env: prod
+            project: nolgia-web-prd
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ matrix.env == 'stg' && 'projects/198519101960/locations/global/workloadIdentityPools/github-actions/providers/github' || 'projects/725349205404/locations/global/workloadIdentityPools/github-actions/providers/github' }}
+          service_account: gha-agent-images@${{ matrix.project }}.iam.gserviceaccount.com
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            us-west1-docker.pkg.dev/${{ matrix.project }}/nolgia/gnosis:latest
+            us-west1-docker.pkg.dev/${{ matrix.project }}/nolgia/gnosis:sha-${{ github.sha }}
+          # Per-env scopes so the two matrix legs keep independent warm
+          # caches instead of racing one scope.
+          cache-from: type=gha,scope=gnosis-ar-${{ matrix.env }}
+          cache-to: type=gha,mode=max,scope=gnosis-ar-${{ matrix.env }}
