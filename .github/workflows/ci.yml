@@ -6,12 +6,16 @@ on:
     branches:
       - main
 
-# The artifact-registry job below pushes the moving :latest tag the agent
-# fleet deploys; serialize per ref so overlapping merges cannot interleave
-# half-pushed manifests, and never cancel mid-push.
+# PR runs are disposable, so keep only the newest per branch. Main pushes get
+# a group per commit instead: GitHub holds at most one pending run per group
+# and a newer run evicts the pending one, so a shared main group would drop
+# intermediate merges along with their post-merge tests and immutable
+# sha-<sha> image. Every main commit therefore runs, and the moving :latest
+# tag is kept monotonic by the tag-resolution step in artifact-registry rather
+# than by queueing.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: false
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -116,14 +120,36 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Runs are no longer serialized, so an older commit's build can finish
+      # after a newer one. Always publish the immutable sha- tag; only move
+      # :latest when this commit is still main's tip, so a slow run cannot roll
+      # the fleet back to an earlier build.
+      - name: Resolve image tags
+        id: tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: us-west1-docker.pkg.dev/${{ matrix.project }}/nolgia/gnosis
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tip="$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)"
+          {
+            echo 'tags<<TAGS_EOF'
+            echo "${IMAGE}:sha-${SHA}"
+            if [ "$tip" = "$SHA" ]; then
+              echo "${IMAGE}:latest"
+            else
+              echo "::notice::main moved to ${tip}; publishing sha-${SHA} only, leaving :latest alone" >&2
+            fi
+            echo TAGS_EOF
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            us-west1-docker.pkg.dev/${{ matrix.project }}/nolgia/gnosis:latest
-            us-west1-docker.pkg.dev/${{ matrix.project }}/nolgia/gnosis:sha-${{ github.sha }}
+          tags: ${{ steps.tags.outputs.tags }}
           # Per-env scopes so the two matrix legs keep independent warm
           # caches instead of racing one scope.
           cache-from: type=gha,scope=gnosis-ar-${{ matrix.env }}
