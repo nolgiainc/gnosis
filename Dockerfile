@@ -1,5 +1,13 @@
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca AS runtime
 
+# The pinned uv base lags Debian security updates (2026-10-03: its gnutls and
+# openssl carried CRITICAL CVEs that bookworm-security had already fixed), and
+# CI's image scan fails on any CRITICAL with a fix available. Apply the
+# distro's security updates at build time so a stale base cannot ship them.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./

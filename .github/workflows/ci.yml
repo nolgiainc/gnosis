@@ -67,14 +67,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Push the immutable sha- tag only; :latest moves after the image scan.
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ghcr.io/nolgiainc/gnosis:latest
-            ghcr.io/nolgiainc/gnosis:sha-${{ github.sha }}
+          tags: ghcr.io/nolgiainc/gnosis:sha-${{ github.sha }}
+
+      # Trivy gate (sec-platform): fails on a CRITICAL with a fix available,
+      # reports HIGH into the job summary. Allowlist: .trivyignore.yaml.
+      - name: Scan image
+        run: .github/scripts/image-scan.sh "ghcr.io/nolgiainc/gnosis@${{ steps.build.outputs.digest }}" "ghcr gnosis sha-${{ github.sha }}"
+
+      - name: Promote :latest
+        run: docker buildx imagetools create --tag ghcr.io/nolgiainc/gnosis:latest "ghcr.io/nolgiainc/gnosis@${{ steps.build.outputs.digest }}"
 
   # Push the image the agent fleet actually deploys (NOL-404). Provisioned
   # agents pull the same-project Artifact Registry gnosis:latest (infra
@@ -125,7 +133,8 @@ jobs:
       # Runs are no longer serialized, so an older commit's build can finish
       # after a newer one. Always publish the immutable sha- tag; only move
       # :latest when this commit is still main's tip, so a slow run cannot roll
-      # the fleet back to an earlier build.
+      # the fleet back to an earlier build. :latest moves only after the image
+      # scan below passes, because it is what the fleet pulls.
       - name: Resolve image tags
         id: tags
         env:
@@ -135,24 +144,32 @@ jobs:
         run: |
           set -euo pipefail
           tip="$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)"
-          {
-            echo 'tags<<TAGS_EOF'
-            echo "${IMAGE}:sha-${SHA}"
-            if [ "$tip" = "$SHA" ]; then
-              echo "${IMAGE}:latest"
-            else
-              echo "::notice::main moved to ${tip}; publishing sha-${SHA} only, leaving :latest alone" >&2
-            fi
-            echo TAGS_EOF
-          } >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${IMAGE}:sha-${SHA}" >> "$GITHUB_OUTPUT"
+          if [ "$tip" = "$SHA" ]; then
+            echo "promote=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "promote=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::main moved to ${tip}; publishing sha-${SHA} only, leaving :latest alone"
+          fi
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ steps.tags.outputs.sha_tag }}
           # Per-env scopes so the two matrix legs keep independent warm
           # caches instead of racing one scope.
           cache-from: type=gha,scope=gnosis-ar-${{ matrix.env }}
           cache-to: type=gha,mode=max,scope=gnosis-ar-${{ matrix.env }}
+
+      # Trivy gate (sec-platform): fails on a CRITICAL with a fix available,
+      # reports HIGH into the job summary. Allowlist: .trivyignore.yaml.
+      - name: Scan image
+        run: .github/scripts/image-scan.sh "${{ steps.tags.outputs.image }}@${{ steps.build.outputs.digest }}" "gnosis ${{ matrix.env }} sha-${{ github.sha }}"
+
+      - name: Promote :latest
+        if: steps.tags.outputs.promote == 'true'
+        run: docker buildx imagetools create --tag "${{ steps.tags.outputs.image }}:latest" "${{ steps.tags.outputs.image }}@${{ steps.build.outputs.digest }}"

@@ -1,0 +1,24 @@
+# Accepted container-image vulnerabilities (Trivy ignore file, YAML format).
+#
+# Read by .github/scripts/image-scan.sh, which fails the image build on any
+# CRITICAL vulnerability that has a fixed version available. An entry here is
+# an accepted risk, so the bar is high:
+#
+#   - Only for a CRITICAL that is genuinely out of our hands (e.g. the upstream
+#     base image or distro has no fixed build yet). A CRITICAL with a fix is
+#     FIXED (bump the base image digest or the package), never listed here.
+#   - Every entry carries `id`, a `statement` saying why it is not fixable or
+#     not reachable in this image, and `expired_at` no more than 90 days out.
+#     An expired entry stops matching and the build goes red again, which is
+#     the point: the exception gets re-justified or the fix gets made.
+#   - Optional `paths` / `purls` narrow an entry to one package or file.
+#
+# Example:
+#   vulnerabilities:
+#     - id: CVE-2026-00000
+#       statement: >-
+#         libfoo in the distroless base; Debian has no fixed build yet and the
+#         binary never parses untrusted input. Re-check when bookworm ships one.
+#       expired_at: 2027-01-01
+
+vulnerabilities: []
