@@ -16,6 +16,12 @@ Precedence, highest first: explicit `GNOSIS_*` env vars → `.env` → the YAML
 config file → code defaults. So the file sets the baseline and a single env var
 still overrides one key.
 
+LLM-planned graph QA is gated by `GNOSIS_GRAPHQA_ENABLED` (default off, and not
+set by any file here; see [docs/security.md](../docs/security.md#graph-qa-safety)).
+With it off, graph-QA fusion - including the multi-hop route of adaptive routing
+in `default.yaml` - is a no-op. To reproduce a run measured with graph-QA fusion
+(runs 10, 11, 14-21), set `GNOSIS_GRAPHQA_ENABLED=true` alongside the config.
+
 ## default.yaml — the preferred config (Run 18)
 
 [`default.yaml`](default.yaml) is the LOCOMO benchmark-best: fact extraction +

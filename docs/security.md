@@ -67,11 +67,38 @@ read time or merge, never delete silently.
 
 ## Graph-QA safety
 
-Natural-language graph questions are planned by an LLM but never trusted: gnosis
-**validates** the generated Cypher against a scope-checked schema guide (every
-`Entity`/`Fact` alias bound by `tenant_id` + `user_id`), logs it, and executes it
-**read-only**. Invalid, out-of-scope, or write-attempting plans are rejected and
-the read degrades to dense-only. Clients cannot submit Cypher.
+LLM-planned graph QA is **off by default** (`GNOSIS_GRAPHQA_ENABLED=false`). A
+multi-tenant deployment typically runs one gnosis per tenant against a shared
+Neo4j with one credential, so a planned query is the only boundary between a
+prompt-injected question and another tenant's rows. With the flag off no planner
+is wired: `/v1/graph/context` and `include_graph` run only the fixed,
+parameterised context queries, and graph-QA fusion is a no-op.
+
+When enabled, natural-language graph questions are planned by an LLM but never
+trusted. Three independent layers apply:
+
+1. **Validation** (`graph_query_validation` / `graph_query_rules`). The plan must
+   be a single read statement with no comments; `OR`, `XOR`, and `NOT` are
+   rejected outside string literals; write and admin clauses (`CREATE`, `MERGE`,
+   `SET`, `DELETE`, `REMOVE`, `DETACH`, `FOREACH`, `LOAD CSV`, `USE`, ...),
+   procedures (`CALL x.y`), the `apoc`/`db`/`dbms`/`gds` namespaces, and any
+   function outside a small allow-list are rejected. **Every node pattern** -
+   including re-references of an alias - must be
+   `(alias:Label {tenant_id: $tenant_id, ...})` with one label and the tenant
+   pinned in the property map (`Entity`/`Fact` also pin `user_id: $user_id`).
+   A map predicate cannot be OR-ed, negated, or compared against `false`, which
+   a `WHERE` predicate can. Every `RETURN` must project `<alias>.tenant_id AS
+   tenant_id` for the node supplying `id`, and a `*tenant_id` column for any
+   other node whose properties it returns.
+2. **READ transaction.** The plan runs with `routing_=READ`; the server rejects
+   any write with `Neo.ClientError.Statement.AccessMode`.
+3. **Row tenant filter** (`graph_query_execution`). Rows missing `tenant_id`, or
+   with any `*tenant_id` column different from the caller's tenant, are dropped
+   before they are stamped with the caller's scope; the drop is logged as counts
+   only.
+
+Rejected or failed plans degrade to the fixed context query (or dense-only for
+fusion). Clients cannot submit Cypher.
 
 ## Federation safety
 

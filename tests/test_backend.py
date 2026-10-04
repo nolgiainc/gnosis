@@ -183,12 +183,31 @@ def test_litellm_embedding_model_when_embedding_alias_is_qualified() -> None:
     assert sdk_model == "openai/local-qwen3-embedding-0.6b"
 
 
-def test_backend_default_graph_store_uses_gnosis_graph_query_planner() -> None:
-    # Given: gnosis has its own LiteLLM graph QA settings.
+def test_backend_default_graph_store_has_no_planner_when_graphqa_disabled() -> None:
+    # Given: default settings - LLM-planned graph QA is opt-in.
     settings = Settings(
         gnosis_llm="openai/gpt-5.5",
         litellm_base_url="http://litellm.test/v1",
         litellm_api_key="test-graph-key",
+    )
+
+    # When: the backend builds its default direct graph store.
+    store = build_direct_graph_store(settings)
+
+    # Then: no LLM Cypher planner is wired, so graph context only runs the
+    # fixed parameterised queries.
+    executor = cast("Neo4jGraphExecutor", store.executor)
+    assert settings.gnosis_graphqa_enabled is False
+    assert executor.graph_query_planner is None
+
+
+def test_backend_default_graph_store_uses_gnosis_graph_query_planner() -> None:
+    # Given: gnosis has its own LiteLLM graph QA settings and graph QA enabled.
+    settings = Settings(
+        gnosis_llm="openai/gpt-5.5",
+        litellm_base_url="http://litellm.test/v1",
+        litellm_api_key="test-graph-key",
+        gnosis_graphqa_enabled=True,
     )
 
     # When: the backend builds its default direct graph store.

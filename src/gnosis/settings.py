@@ -184,6 +184,15 @@ class Settings(BaseSettings):
     # influence without changing the dense candidate ranking. Default 1.0 =
     # equal-weight RRF (original behavior).
     gnosis_rrf_lexical_weight: float = Field(default=1.0, ge=0.0, le=10.0)
+    # LLM-planned graph QA: the caller's free-text query is turned into Cypher
+    # by GNOSIS_LLM and executed against Neo4j. Every tenant shares one Neo4j
+    # instance and one credential, so the generated query is the only thing
+    # between a prompt-injected query and another tenant's rows; the validator,
+    # READ transaction, and per-row tenant filter are defense in depth, not a
+    # reason to turn this on. Off = /v1/graph/context (and include_graph) use
+    # only the fixed parameterised context queries, and graph-QA fusion is a
+    # no-op. Default off.
+    gnosis_graphqa_enabled: bool = False
     gnosis_graphqa_fusion_enabled: bool = False
     # The graph-QA planner is an LLM call that commonly takes ~10s on a
     # frontier model; a 5s budget timed out on every fusion request. 20s

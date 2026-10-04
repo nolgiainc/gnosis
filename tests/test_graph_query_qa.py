@@ -18,7 +18,7 @@ def test_validator_accepts_scoped_read_only_query() -> None:
         cypher="""
         MATCH (r:Role {tenant_id: $tenant_id})
         WHERE r.guild_id = $guild_id
-        RETURN r.id AS id, 'graph_query' AS type,
+        RETURN r.id AS id, r.tenant_id AS tenant_id, 'graph_query' AS type,
           coalesce(r.name, r.role_id) AS summary, false AS deleted
         ORDER BY summary ASC
         LIMIT $limit
@@ -151,7 +151,7 @@ def test_validator_accepts_fully_scoped_message_query() -> None:
         cypher="""
         MATCH (m:Message {tenant_id: $tenant_id, agent_id: $agent_id})
         WHERE m.guild_id = $guild_id AND m.channel_id = $channel_id
-        RETURN m.id AS id, 'graph_query' AS type,
+        RETURN m.id AS id, m.tenant_id AS tenant_id, 'graph_query' AS type,
           m.summary AS summary, false AS deleted
         ORDER BY m.updated_at DESC
         LIMIT $limit
@@ -207,7 +207,7 @@ def test_validator_accepts_scoped_entity_relates_traversal() -> None:
               -[:RELATES]->(company:Entity {tenant_id: $tenant_id, user_id: $user_id})
               -[r:RELATES]->(founder:Entity {tenant_id: $tenant_id, user_id: $user_id})
         WHERE a.name = $name
-        RETURN founder.id AS id, 'entity' AS type,
+        RETURN founder.id AS id, founder.tenant_id AS tenant_id, 'entity' AS type,
           founder.name AS summary, false AS deleted
         LIMIT $limit
         """,
@@ -237,7 +237,8 @@ def test_validator_accepts_scoped_fact_mentions_traversal() -> None:
         MATCH (e:Entity {tenant_id: $tenant_id, user_id: $user_id})
               <-[:MENTIONS]-(f:Fact {tenant_id: $tenant_id, user_id: $user_id})
         WHERE e.name = $name
-        RETURN f.id AS id, 'fact' AS type, f.object AS summary, false AS deleted
+        RETURN f.id AS id, f.tenant_id AS tenant_id, 'fact' AS type,
+          f.object AS summary, false AS deleted
         LIMIT $limit
         """,
         parameters={"name": "Alice"},
@@ -329,3 +330,146 @@ async def test_plan_graph_query_swallows_structured_output_violations() -> None:
 
     # Then: it degrades to no graph context rather than 500-ing the caller.
     assert plan is None
+
+
+_PINNED_FACT = "(f:Fact {tenant_id: $tenant_id, user_id: $user_id})"
+_FACT_RETURN = """
+RETURN f.id AS id, f.tenant_id AS tenant_id, 'fact' AS type,
+  f.object AS summary, false AS deleted
+LIMIT $limit
+"""
+
+
+@pytest.mark.parametrize(
+    "cypher",
+    [
+        # Reported bypass 1: the tenant predicate OR-ed with a tautology.
+        """
+        MATCH (f:Fact)
+        WHERE f.tenant_id = $tenant_id AND f.user_id = $user_id OR true
+        """
+        + _FACT_RETURN,
+        f"MATCH {_PINNED_FACT} WHERE f.object = $name OR 1=1" + _FACT_RETURN,
+        """
+        MATCH (f:Fact)
+        WHERE f.tenant_id = $tenant_id OR 1=1 AND f.user_id = $user_id
+        """
+        + _FACT_RETURN,
+        f"MATCH {_PINNED_FACT} WHERE f.object = $name XOR true" + _FACT_RETURN,
+        """
+        MATCH (f:Fact {user_id: $user_id})
+        WHERE NOT f.tenant_id <> $tenant_id
+        """
+        + _FACT_RETURN,
+        # Tenant predicate only in WHERE, defeated without OR/NOT.
+        """
+        MATCH (f:Fact {user_id: $user_id})
+        WHERE (f.tenant_id = $tenant_id) IS NULL
+        """
+        + _FACT_RETURN,
+        """
+        MATCH (f:Fact {user_id: $user_id})
+        WHERE f.tenant_id = $tenant_id = false
+        """
+        + _FACT_RETURN,
+        # Reported bypass 2: pin a Tenant node, then MATCH an unlabelled node.
+        """
+        MATCH (t:Tenant {tenant_id: $tenant_id})
+        MATCH (f)
+        RETURN f.id AS id, f.tenant_id AS tenant_id, 'node' AS type,
+          f.summary AS summary, false AS deleted
+        LIMIT $limit
+        """,
+        # Second MATCH on a labelled node with no tenant predicate.
+        """
+        MATCH (t:Tenant {tenant_id: $tenant_id})
+        MATCH (f:Fact)
+        """
+        + _FACT_RETURN,
+        # Unlabelled alias re-bound after WITH drops the pinned binding.
+        f"MATCH {_PINNED_FACT} WITH 1 AS x MATCH (f)" + _FACT_RETURN,
+        # Anonymous node in a traversal.
+        f"MATCH {_PINNED_FACT}-[:MENTIONS]->()" + _FACT_RETURN,
+        # Label expression instead of a single label.
+        """
+        MATCH (f:Fact|Entity {tenant_id: $tenant_id, user_id: $user_id})
+        """
+        + _FACT_RETURN,
+        # Tenant pinned to something other than $tenant_id.
+        "MATCH (f:Fact {tenant_id: $user_id, user_id: $user_id})" + _FACT_RETURN,
+        "MATCH (f:Fact {tenant_id: f.user_id, user_id: $user_id})" + _FACT_RETURN,
+        # Write clauses and procedures.
+        f"MATCH {_PINNED_FACT} SET f.object = $name" + _FACT_RETURN,
+        f"MATCH {_PINNED_FACT} DETACH DELETE f" + _FACT_RETURN,
+        f"MATCH {_PINNED_FACT} FOREACH (x IN [1] | MERGE (f)-[:RELATES]->(f))"
+        + _FACT_RETURN,
+        "CALL db.labels() YIELD label RETURN label AS id LIMIT $limit",
+        f"MATCH {_PINNED_FACT} CALL db.labels() YIELD label" + _FACT_RETURN,
+        f"MATCH {_PINNED_FACT} WITH f, apoc.text.join([], '') AS j" + _FACT_RETURN,
+        "USE system MATCH " + _PINNED_FACT + _FACT_RETURN,
+        # Multiple statements and comments.
+        f"MATCH {_PINNED_FACT}" + _FACT_RETURN + "; MATCH (n) RETURN n",
+        f"MATCH {_PINNED_FACT} // (f:Fact {{tenant_id: $tenant_id}})" + _FACT_RETURN,
+        # Unknown function and grouping parentheses.
+        f"MATCH p = {_PINNED_FACT} WITH f, nodes(p) AS ns" + _FACT_RETURN,
+        # Missing or literal-forged tenant column.
+        f"""
+        MATCH {_PINNED_FACT}
+        RETURN f.id AS id, 'fact' AS type, f.object AS summary, false AS deleted
+        LIMIT $limit
+        """,
+        f"""
+        MATCH {_PINNED_FACT}
+        RETURN f.id AS id, 'f.tenant_id AS tenant_id' AS type,
+          f.object AS summary, false AS deleted
+        LIMIT $limit
+        """,
+        # A second node's properties returned without its tenant column.
+        f"""
+        MATCH {_PINNED_FACT}-[:MENTIONS]->
+          (e:Entity {{tenant_id: $tenant_id, user_id: $user_id}})
+        RETURN f.id AS id, f.tenant_id AS tenant_id, 'fact' AS type,
+          e.name AS summary, false AS deleted
+        LIMIT $limit
+        """,
+        # Unterminated literal.
+        f"MATCH {_PINNED_FACT} WHERE f.object = 'open" + _FACT_RETURN,
+    ],
+)
+def test_validator_rejects_cross_tenant_bypass_queries(cypher: str) -> None:
+    # Given: a planned query that could read outside the caller's tenant.
+    request = GraphContextRequest(scope=_memory_scope(), query="anything", limit=5)
+    plan = GraphQueryPlan(cypher=cypher, parameters={}, answer_kind="bypass")
+
+    # When / Then: validation blocks the query before Neo4j can execute it.
+    with pytest.raises(GraphQueryValidationError):
+        _ = SafeGraphQueryValidator().validate(plan, request)
+
+
+@pytest.mark.parametrize(
+    "cypher",
+    [
+        # Boolean words inside a string literal are data, not operators.
+        f"MATCH {_PINNED_FACT} WHERE f.object CONTAINS 'black or not white'"
+        + _FACT_RETURN,
+        # A second returned node projects its own tenant column.
+        f"""
+        MATCH {_PINNED_FACT}-[:MENTIONS]->
+          (e:Entity {{tenant_id: $tenant_id, user_id: $user_id}})
+        RETURN f.id AS id, f.tenant_id AS tenant_id, e.tenant_id AS e_tenant_id,
+          'fact' AS type, e.name + ': ' + f.object AS summary, false AS deleted
+        LIMIT $limit
+        """,
+    ],
+)
+def test_validator_accepts_pinned_queries_with_tenant_columns(cypher: str) -> None:
+    # Given: every node pattern is tenant-pinned and every returned node
+    # projects its tenant column.
+    request = GraphContextRequest(scope=_memory_scope(), query="anything", limit=5)
+    plan = GraphQueryPlan(cypher=cypher, parameters={}, answer_kind="facts")
+
+    # When: gnosis validates the query.
+    validated = SafeGraphQueryValidator().validate(plan, request)
+
+    # Then: it is accepted unchanged.
+    assert validated.cypher == cypher
