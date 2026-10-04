@@ -1,0 +1,86 @@
+name: Secret Scan
+
+# Adapted from nolgiainc/infra .github/workflows/gitleaks.yml (AC-04), the
+# org's secret-scan baseline. This job runs gitleaks on every PR and every push
+# to main:
+#
+#   - the COMMITS a change adds (base..head), so a secret added and removed
+#     inside one PR is still caught, and
+#   - the working TREE at head, so a secret already in a tracked file fails
+#     the next change that touches the repo.
+#
+# Older history is not rescanned on every run (it was scanned once, in full,
+# when this job was added; see the PR that introduced it). Findings are printed
+# REDACTED (--redact=100) so the job log never carries the secret itself.
+#
+# gitleaks runs as the release binary, pinned by version and sha256 (the
+# gitleaks-action needs a paid license for organisations). False positives go
+# in .gitleaks.toml as narrow allowlists, never as broad path exclusions.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: secret-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the commit-range scan needs the base commit
+          persist-credentials: false
+
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          tgz="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLo "$RUNNER_TEMP/$tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tgz}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tgz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+
+      - name: Scan the commits this change adds
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+            *) base="" ;;
+          esac
+          # A new branch push reports an all-zero `before`; a dispatch has no
+          # base. Both fall back to the last commit only.
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            range="-n 1 $HEAD_SHA"
+          else
+            range="${base}..${HEAD_SHA}"
+          fi
+          echo "Scanning commit range: $range"
+          "$RUNNER_TEMP/gitleaks" git . --no-banner --redact=100 \
+            --config .gitleaks.toml --log-opts="$range"
+
+      - name: Scan the working tree at head
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/gitleaks" dir . --no-banner --redact=100 --config .gitleaks.toml

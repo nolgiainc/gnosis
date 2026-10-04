@@ -1,0 +1,58 @@
+# Dependabot version updates (vulnerability-management policy, nolgiainc/infra
+# docs/security/vulnerability-management.md). Weekly, grouped so each ecosystem
+# opens at most one minor/patch PR a week; majors arrive one PR each. Security
+# updates are grouped per ecosystem too. PRs that touch .github/** (Actions
+# bumps) need a founder approval like any other sensitive change.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      uv-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      uv-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      docker-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      docker-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      github-actions-minor-and-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      github-actions-security:
+        applies-to: security-updates
+        patterns: ["*"]

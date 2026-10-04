@@ -1,0 +1,14 @@
+# gitleaks config (adapted from nolgiainc/infra, AC-04). Default rules plus
+# narrow allowlists for test fixtures that trip the generic-api-key rule.
+# Each allowlist pins the exact fake value AND the file it lives in; never
+# allowlist a path wholesale.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "tests: fake OpenAI-style key and a consolidation idempotency key used as request fixtures"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^tests/test_(api|backend)\.py$''']
+regexTarget = "secret"
+regexes = ['''^sk-1234567890abcdef$''', '''^consolidation-apply-1$''']
