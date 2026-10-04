@@ -114,6 +114,8 @@ extraction mode, send a `messages` array with `"infer": true` and a capable
   multi-user single-store deployments (e.g., LongMemEval multi-instance runs).
 - **Graph-QA fusion** (`GNOSIS_GRAPHQA_FUSION_ENABLED`): Cypher query planner over
   the entity graph, fused with vector candidates. Validated, read-only, tenant-scoped.
+  Requires `GNOSIS_GRAPHQA_ENABLED=true` (off by default; see
+  [Security](docs/security.md#graph-qa-safety)).
 - **LLM reranker** (`GNOSIS_RERANK_ENABLED`): listwise reranker over the top-N
   fused candidates before the item-budget cut. Reranking is the single lever
   present in all strongest 2026 systems (Mnemis, EverMemOS, agentmemory).

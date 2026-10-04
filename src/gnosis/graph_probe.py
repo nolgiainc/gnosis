@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, Self, override
 
+from neo4j import RoutingControl
 from neo4j.exceptions import Neo4jError
 
 from gnosis.models import (
@@ -38,6 +39,11 @@ class AsyncNeo4jDriver(Protocol):
         query: str,
         parameters: CypherParameters,
     ) -> list[CypherRow]: ...
+    async def execute_read_query(
+        self,
+        query: str,
+        parameters: CypherParameters,
+    ) -> list[CypherRow]: ...
     async def __aenter__(self) -> Self: ...
     async def __aexit__(
         self,
@@ -64,6 +70,7 @@ class AsyncNeo4jRawDriver(Protocol):
         self,
         query_: str,
         parameters_: CypherParameters,
+        routing_: RoutingControl = ...,
     ) -> tuple[list[CypherRow], object, object]: ...
     async def close(self) -> None: ...
 
@@ -121,6 +128,26 @@ class DirectNeo4jDriverContext:
     ) -> list[CypherRow]:
         records, _, _ = await self.driver.execute_query(query, parameters)
         return records
+
+    async def execute_read_query(
+        self,
+        query: str,
+        parameters: CypherParameters,
+    ) -> list[CypherRow]:
+        """Run ``query`` in a READ-access transaction.
+
+        The server enforces the access mode, so a write clause fails with
+        ``Neo.ClientError.Statement.AccessMode`` instead of executing. Records
+        are copied into plain dicts: a ``neo4j.Record`` is a tuple, so ``in``
+        tests its values and ``keys()`` returns a list, which breaks key-based
+        row checks downstream.
+        """
+        records, _, _ = await self.driver.execute_query(
+            query,
+            parameters,
+            routing_=RoutingControl.READ,
+        )
+        return [dict(record) for record in records]
 
     async def __aenter__(self) -> Self:
         return self

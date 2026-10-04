@@ -23,9 +23,14 @@ Message, Link, Attachment, Event, GraphNode, Entity, Fact.
 Relationships: OWNS_AGENT, OWNS_CLIENT, USES_CLIENT, OWNS_GUILD, IN_GUILD,
 IN_CATEGORY, OWNS_ROLE, HAS_ROLE, AUTHORED, IN_CHANNEL, LINKED_FROM,
 ATTACHED_TO, AFFECTS, MENTIONS, RELATES.
-Every query must scope by tenant_id = $tenant_id. If a guild question has
-$guild_id, also scope by guild_id = $guild_id or graph IN_GUILD membership.
-If a channel question has $channel_id, scope by channel_id = $channel_id.
+Every node pattern, including every repeated reference to an alias, must be
+written as (alias:Label {tenant_id: $tenant_id, ...}) with exactly one label
+and the tenant pinned inside the property map - never (alias) or () alone and
+never tenant_id in WHERE only. If a guild question has $guild_id, also scope by
+guild_id = $guild_id or graph IN_GUILD membership. If a channel question has
+$channel_id, scope by channel_id = $channel_id. Combine predicates with AND
+only: OR, XOR, and NOT are rejected, as are comments, semicolons, and
+parentheses other than node patterns and function calls.
 
 Knowledge graph (use for who/what/relationship and multi-hop questions about a
 user's remembered facts):
@@ -36,10 +41,13 @@ An (:Entity {name}) is a person, place, organization, or thing. A (:Fact
 relationship between two entities (r.relation is the verb phrase). Traverse
 RELATES for multi-hop bridge questions; follow MENTIONS to fetch the facts
 naming an entity. Match an entity by name with e.name = $name or a literal.
-Every Entity and Fact alias MUST be scoped by BOTH tenant_id = $tenant_id AND
-user_id = $user_id.
+Every Entity and Fact node pattern MUST pin BOTH tenant_id: $tenant_id AND
+user_id: $user_id in its property map.
 
-Return rows with id, type, summary, deleted. Use LIMIT $limit.
+Return rows with id, type, summary, deleted, and tenant_id, where id and
+tenant_id come from the same node (n.id AS id, n.tenant_id AS tenant_id). If
+the RETURN reads properties of any other node alias m, also return
+m.tenant_id AS m_tenant_id. Use LIMIT $limit.
 Never use CREATE, MERGE, SET, DELETE, DETACH, REMOVE, LOAD, DROP, or procedures.
 """.strip()
 

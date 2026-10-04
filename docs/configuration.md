@@ -81,7 +81,8 @@ applied per-route rather than globally.
 | `GNOSIS_SUFFICIENCY_CHECK_ENABLED` / `_MODEL` | `false` | sufficiency autorater signal |
 | `GNOSIS_ABSTENTION_PROMPT_ENABLED` | `false` | abstention grounding instruction |
 | `GNOSIS_FACT_VERBATIM_EXPANSION_ENABLED` / `_MAX` | `false` / `5` | render source turns under top facts |
-| `GNOSIS_GRAPHQA_FUSION_ENABLED` / `_TIMEOUT_SECONDS` | `false` / `20` | dual-route graph-QA fusion |
+| `GNOSIS_GRAPHQA_ENABLED` | `false` | LLM-planned Cypher for `/v1/graph/context`, `include_graph`, and fusion; off = fixed parameterised queries only (see [Security](security.md#graph-qa-safety)) |
+| `GNOSIS_GRAPHQA_FUSION_ENABLED` / `_TIMEOUT_SECONDS` | `false` / `20` | dual-route graph-QA fusion (no-op unless `GNOSIS_GRAPHQA_ENABLED`) |
 | `GNOSIS_GRAPH_TRAVERSAL_ENABLED` / `GNOSIS_BRIDGE_TRAVERSAL_ENABLED` | `false` | entity / bridge traversal |
 | `GNOSIS_COVERAGE_BUDGET_MULTIPLIER` | `1` | item-budget multiplier on enumeration routes (1–5) |
 

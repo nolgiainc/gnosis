@@ -151,6 +151,13 @@ class RecordingCypherDriver:
         self.parameters.append(parameters)
         return [{"duplicate": False}]
 
+    async def execute_read_query(
+        self,
+        query: str,
+        parameters: CypherParameters,
+    ) -> Sequence[dict[str, JsonValue]]:
+        return await self.execute_query(query, parameters)
+
     async def verify_connectivity(self) -> None:
         self.queries.append("verify_connectivity")
 

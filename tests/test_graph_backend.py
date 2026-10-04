@@ -512,6 +512,13 @@ class RecordingCypherDriver:
         self.queries.append(query)
         return [{"duplicate": False}]
 
+    async def execute_read_query(
+        self,
+        query: str,
+        parameters: dict[str, JsonValue],
+    ) -> Sequence[dict[str, JsonValue]]:
+        return await self.execute_query(query, parameters)
+
     async def verify_connectivity(self) -> None:
         self.queries.append("verify_connectivity")
 
@@ -551,6 +558,13 @@ class FailingCypherDriver:
         _ = (query, parameters)
         reason = "connection refused"
         raise OSError(reason)
+
+    async def execute_read_query(
+        self,
+        query: str,
+        parameters: dict[str, JsonValue],
+    ) -> Sequence[dict[str, JsonValue]]:
+        return await self.execute_query(query, parameters)
 
     async def verify_connectivity(self) -> None:
         reason = "connection refused"

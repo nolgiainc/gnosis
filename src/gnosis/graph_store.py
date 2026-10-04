@@ -61,6 +61,11 @@ class CypherDriver(Protocol):
         query: str,
         parameters: CypherParameters,
     ) -> Sequence[dict[str, JsonValue]]: ...
+    async def execute_read_query(
+        self,
+        query: str,
+        parameters: CypherParameters,
+    ) -> Sequence[dict[str, JsonValue]]: ...
     async def verify_connectivity(self) -> None: ...
     async def __aenter__(self) -> Self: ...
     async def __aexit__(
@@ -185,8 +190,10 @@ class Neo4jGraphExecutor:
             )
             return ()
         try:
+            # Planned Cypher is LLM-generated: run it in a READ transaction so
+            # the server refuses any write the validator might have missed.
             async with self.driver_factory() as driver:
-                rows = await driver.execute_query(
+                rows = await driver.execute_read_query(
                     validated.cypher,
                     validated.parameters,
                 )

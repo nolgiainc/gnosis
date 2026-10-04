@@ -340,7 +340,8 @@ autorater is the fix; retrieval-score thresholds are unreliable.
 
 ### Graph-augmented recall
 
-**Graph-QA fusion (dual-route).** `GNOSIS_GRAPHQA_FUSION_ENABLED` runs the
+**Graph-QA fusion (dual-route).** `GNOSIS_GRAPHQA_FUSION_ENABLED` (together
+with `GNOSIS_GRAPHQA_ENABLED`, which is off by default) runs the
 LLM-planned, validation-gated, scope-safe, read-only graph-QA route
 (entity → relationship → answer) in parallel (`asyncio.gather`) with dense
 retrieval and unions its derived nodes into the candidate set before supersession

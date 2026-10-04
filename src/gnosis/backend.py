@@ -786,16 +786,24 @@ def build_direct_graph_store(settings: Settings) -> DirectNeo4jGraphStore:
         api_base=settings.litellm_base_url,
         api_key=settings.litellm_api_key,
     )
+    # GNOSIS_GRAPHQA_ENABLED gates the LLM Cypher planner (see settings): with
+    # it off no planner is wired, so graph context only ever runs the fixed,
+    # parameterised queries.
+    graph_query_planner = (
+        LiteLLMGraphQueryPlanner(
+            model=settings.gnosis_llm,
+            base_url=settings.litellm_base_url,
+            api_key=settings.litellm_api_key,
+        )
+        if settings.gnosis_graphqa_enabled
+        else None
+    )
     return DirectNeo4jGraphStore(
         executor=Neo4jGraphExecutor(
             driver_factory=direct_neo4j_driver_factory(settings),
             embedding_dimensions=settings.gnosis_embedding_dimensions,
             embedding_provider=embedding_provider,
-            graph_query_planner=LiteLLMGraphQueryPlanner(
-                model=settings.gnosis_llm,
-                base_url=settings.litellm_base_url,
-                api_key=settings.litellm_api_key,
-            ),
+            graph_query_planner=graph_query_planner,
         ),
     )
 
@@ -2345,16 +2353,21 @@ class Neo4jAgentMemoryBackend:
         every context query in parallel with dense long-term retrieval; its
         derived nodes join the long-term candidate set before ranking is cut so
         multi-hop traversal facts survive the item budget. A no-op empty list
-        while the effective decision leaves fusion off (byte-identical
-        dense-only output) or with no query. The route is bounded by
-        GNOSIS_GRAPHQA_FUSION_TIMEOUT_SECONDS and any planner/execution failure
-        (LLM, Neo4j, validation rejection, timeout) degrades to dense-only with
-        a structured warning - the context request never fails on the graph leg.
+        while GNOSIS_GRAPHQA_ENABLED is off or the effective decision leaves
+        fusion off (byte-identical dense-only output) or with no query. The
+        route is bounded by GNOSIS_GRAPHQA_FUSION_TIMEOUT_SECONDS and any
+        planner/execution failure (LLM, Neo4j, validation rejection, timeout)
+        degrades to dense-only with a structured warning - the context request
+        never fails on the graph leg.
 
         Distinct from the per-request ``include_graph`` flag, which renders a
         separate graph section rather than fusing into the ranked facts.
         """
-        if not decision.graphqa_fusion or not request.query:
+        if (
+            not self._app_settings.gnosis_graphqa_enabled
+            or not decision.graphqa_fusion
+            or not request.query
+        ):
             return []
         try:
             graph = await asyncio.wait_for(

@@ -1287,7 +1287,10 @@ async def test_routing_multi_hop_enables_graph_fusion_despite_global_off() -> No
     )
     router = RecordingQueryRouter(verdict=RouteVerdict(route="multi_hop"))
     backend = Neo4jAgentMemoryBackend(
-        _settings(gnosis_adaptive_routing_enabled=True),
+        _settings(
+            gnosis_adaptive_routing_enabled=True,
+            gnosis_graphqa_enabled=True,
+        ),
         memory_client_factory=MemoryClientFactory(
             RecordingMemoryClient(
                 query=RecordingQuery(),
@@ -1381,6 +1384,7 @@ async def test_routing_single_hop_suppresses_globally_enabled_features() -> None
     backend = Neo4jAgentMemoryBackend(
         _settings(
             gnosis_adaptive_routing_enabled=True,
+            gnosis_graphqa_enabled=True,
             gnosis_graphqa_fusion_enabled=True,
             gnosis_abstention_prompt_enabled=True,
         ),
@@ -1961,7 +1965,7 @@ async def test_graphqa_fusion_adds_graph_nodes_to_facts_when_enabled() -> None:
         ],
     )
     backend = Neo4jAgentMemoryBackend(
-        _settings(gnosis_graphqa_fusion_enabled=True),
+        _settings(gnosis_graphqa_enabled=True, gnosis_graphqa_fusion_enabled=True),
         memory_client_factory=MemoryClientFactory(
             RecordingMemoryClient(
                 query=RecordingQuery(),
@@ -2008,7 +2012,7 @@ async def test_graphqa_fusion_dedupes_node_already_in_dense_results() -> None:
         ],
     )
     backend = Neo4jAgentMemoryBackend(
-        _settings(gnosis_graphqa_fusion_enabled=True),
+        _settings(gnosis_graphqa_enabled=True, gnosis_graphqa_fusion_enabled=True),
         memory_client_factory=MemoryClientFactory(
             RecordingMemoryClient(
                 query=RecordingQuery(),
@@ -2058,7 +2062,7 @@ async def test_graphqa_fusion_survives_item_budget_over_full_dense_pool() -> Non
         ],
     )
     backend = Neo4jAgentMemoryBackend(
-        _settings(gnosis_graphqa_fusion_enabled=True),
+        _settings(gnosis_graphqa_enabled=True, gnosis_graphqa_fusion_enabled=True),
         memory_client_factory=MemoryClientFactory(
             RecordingMemoryClient(
                 query=RecordingQuery(),
@@ -2106,7 +2110,7 @@ async def test_graphqa_fusion_planner_failure_degrades_to_dense_only(
     )
     graph_store = FusionGraphStore(error=OpenAIError("planner down"))
     backend = Neo4jAgentMemoryBackend(
-        _settings(gnosis_graphqa_fusion_enabled=True),
+        _settings(gnosis_graphqa_enabled=True, gnosis_graphqa_fusion_enabled=True),
         memory_client_factory=MemoryClientFactory(
             RecordingMemoryClient(
                 query=RecordingQuery(),
@@ -2152,6 +2156,7 @@ async def test_graphqa_fusion_timeout_degrades_to_dense_only(
     )
     backend = Neo4jAgentMemoryBackend(
         _settings(
+            gnosis_graphqa_enabled=True,
             gnosis_graphqa_fusion_enabled=True,
             gnosis_graphqa_fusion_timeout_seconds=0.01,
         ),
@@ -2184,6 +2189,47 @@ async def test_graphqa_fusion_timeout_degrades_to_dense_only(
 
 
 @pytest.mark.anyio
+async def test_graphqa_fusion_is_noop_while_graphqa_disabled() -> None:
+    # Given: fusion is on but LLM-planned graph QA (GNOSIS_GRAPHQA_ENABLED)
+    # is off, and the graph route has nodes.
+    scope = _scope()
+    dense = _fact_record(
+        subject="user:789",
+        predicate="fact",
+        object_value="Alice works at the city library",
+        metadata=_scope_metadata(scope),
+    )
+    graph_store = FusionGraphStore(
+        facts=[_graph_fact(node_id="graph-node-1", summary="library on Elm")],
+    )
+    backend = Neo4jAgentMemoryBackend(
+        _settings(gnosis_graphqa_fusion_enabled=True),
+        memory_client_factory=MemoryClientFactory(
+            RecordingMemoryClient(
+                query=RecordingQuery(),
+                long_term=RecordingLongTermMemory(search_results=[dense]),
+            ),
+        ),
+        graph_store=graph_store,
+    )
+
+    # When: context is assembled with a query present.
+    response = await backend.get_memory_context(
+        MemoryContextRequest(
+            scope=scope,
+            query="where does Alice work?",
+            include_short_term=False,
+            include_reasoning=False,
+            include_graph=False,
+        ),
+    )
+
+    # Then: the graph route never runs and the output is dense-only.
+    assert graph_store.calls == 0
+    assert "library on Elm" not in response.sections[0].content
+
+
+@pytest.mark.anyio
 async def test_graphqa_fusion_off_is_byte_identical() -> None:
     # Given: identical inputs, fusion flag toggled; the graph route has nodes.
     scope = _scope()
@@ -2206,7 +2252,9 @@ async def test_graphqa_fusion_off_is_byte_identical() -> None:
             facts=[_graph_fact(node_id="graph-node-1", summary="library on Elm")],
         )
         backend = Neo4jAgentMemoryBackend(
-            _settings(gnosis_graphqa_fusion_enabled=enabled),
+            _settings(
+                gnosis_graphqa_enabled=True, gnosis_graphqa_fusion_enabled=enabled
+            ),
             memory_client_factory=MemoryClientFactory(
                 RecordingMemoryClient(
                     query=RecordingQuery(),

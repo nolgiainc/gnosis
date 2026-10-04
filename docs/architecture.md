@@ -63,10 +63,13 @@ never fails because an enhancement did.
 
 ## Graph-QA is planned, validated, executed under policy
 
+Off unless `GNOSIS_GRAPHQA_ENABLED=true` (see [Security](security.md#graph-qa-safety)).
 Callers never write Cypher. For a graph question, gnosis: plans Cypher with an LLM
 (`graph_query_qa`), **validates** it against a scope-checked schema guide
-(`graph_query_validation` / `graph_query_rules` — every `Entity`/`Fact` alias
-bound by `tenant_id`+`user_id`), logs it, then executes it **read-only**
+(`graph_query_validation` / `graph_query_rules` — every node pattern pinned by
+`tenant_id: $tenant_id` in its property map, `Entity`/`Fact` also by `user_id`,
+no `OR`/`XOR`/`NOT`), logs it, then executes it in a **READ** transaction and
+drops any row whose returned tenant columns differ from the caller's
 (`graph_query_execution`). Invalid or unsafe plans are rejected and the read
 degrades to dense-only.
 

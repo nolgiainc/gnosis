@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Self, override
@@ -19,7 +20,7 @@ async def test_dynamic_graph_query_runs_after_activity_aggregate_miss() -> None:
             cypher="""
             MATCH (ch:Channel {tenant_id: $tenant_id})
             WHERE ch.guild_id = $guild_id AND ch.channel_id = $channel_id
-            RETURN ch.id AS id, 'graph_query' AS type,
+            RETURN ch.id AS id, ch.tenant_id AS tenant_id, 'graph_query' AS type,
               coalesce(ch.name, ch.channel_id) AS summary, false AS deleted
             ORDER BY summary ASC
             LIMIT $limit
@@ -46,6 +47,7 @@ async def test_dynamic_graph_query_runs_after_activity_aggregate_miss() -> None:
     assert len(nodes) == 1
     assert nodes[0].summary == "general-chat"
     assert planner.requests == [request]
+    assert driver.read_queries == [planner.plan.cypher if planner.plan else ""]
     assert driver.parameters[-1]["tenant_id"] == "nolgia"
     assert driver.parameters[-1]["guild_id"] == "guild-123"
 
@@ -78,7 +80,7 @@ async def test_dynamic_graph_query_falls_back_when_rows_have_bad_shape() -> None
             cypher="""
             MATCH (ch:Channel {tenant_id: $tenant_id, agent_id: $agent_id})
             WHERE ch.guild_id = $guild_id AND ch.channel_id = $channel_id
-            RETURN ch.id AS id, 'graph_query' AS type,
+            RETURN ch.id AS id, ch.tenant_id AS tenant_id, 'graph_query' AS type,
               ch.name AS summary, false AS deleted
             LIMIT $limit
             """,
@@ -101,6 +103,59 @@ async def test_dynamic_graph_query_falls_back_when_rows_have_bad_shape() -> None
     assert nodes[0].summary == "general-chat"
 
 
+@pytest.mark.anyio
+async def test_dynamic_graph_query_drops_rows_outside_caller_tenant(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Given: a validated plan whose execution (e.g. through a validator gap)
+    # returns rows from another tenant, rows without a tenant column, and a
+    # row whose secondary node belongs to another tenant.
+    foreign = {**_graph_row(), "tenant_id": "other-tenant", "summary": "secret-a"}
+    untagged = {k: v for k, v in _graph_row().items() if k != "tenant_id"}
+    untagged["summary"] = "secret-b"
+    mixed = {**_graph_row(), "e_tenant_id": "other-tenant", "summary": "secret-c"}
+    driver = RecordingCypherDriver(
+        rows_by_query=[[_graph_row(), foreign, untagged, mixed]],
+    )
+    planner = StaticGraphQueryPlanner(
+        plan=GraphQueryPlan(
+            cypher="""
+            MATCH (ch:Channel {tenant_id: $tenant_id, agent_id: $agent_id})
+            WHERE ch.guild_id = $guild_id AND ch.channel_id = $channel_id
+            RETURN ch.id AS id, ch.tenant_id AS tenant_id, 'graph_query' AS type,
+              ch.name AS summary, false AS deleted
+            LIMIT $limit
+            """,
+            parameters={},
+            answer_kind="channels_by_guild",
+        ),
+    )
+    executor = Neo4jGraphExecutor(
+        driver_factory=RecordingDriverFactory(driver),
+        embedding_dimensions=3,
+        graph_query_planner=planner,
+    )
+    request = GraphContextRequest(scope=_scope(), query="Which channel?", limit=5)
+
+    # When: graph context is requested.
+    with caplog.at_level(logging.WARNING, logger="gnosis.graph_query_execution"):
+        nodes = await executor.get_context(request)
+
+    # Then: the planned query ran read-only, only the caller-tenant row is
+    # stamped with the caller scope, and the drop is logged as counts only.
+    assert len(driver.read_queries) == 1
+    assert [node.summary for node in nodes] == ["general-chat"]
+    dropped = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "graph QA dropped rows outside the caller tenant"
+    ]
+    assert len(dropped) == 1
+    assert dropped[0].__dict__["dropped_count"] == 3
+    assert dropped[0].__dict__["kept_count"] == 1
+    assert "secret" not in caplog.text
+
+
 def _scope() -> MemoryScope:
     return MemoryScope(
         tenant_id="nolgia",
@@ -120,6 +175,7 @@ def _graph_row() -> dict[str, JsonValue]:
         "type": "graph_query",
         "summary": "general-chat",
         "deleted": False,
+        "tenant_id": "nolgia",
     }
 
 
@@ -128,6 +184,15 @@ class RecordingCypherDriver:
     rows_by_query: list[Sequence[dict[str, JsonValue]]]
     queries: list[str] = field(default_factory=list)
     parameters: list[CypherParameters] = field(default_factory=list)
+    read_queries: list[str] = field(default_factory=list)
+
+    async def execute_read_query(
+        self,
+        query: str,
+        parameters: CypherParameters,
+    ) -> Sequence[dict[str, JsonValue]]:
+        self.read_queries.append(query)
+        return await self.execute_query(query, parameters)
 
     async def execute_query(
         self,
