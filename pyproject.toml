@@ -21,7 +21,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "basedpyright>=1.35.0",
-    "httpx2[http2,brotli,zstd]>=0.28.0",
+    "httpx2[http2,brotli,zstd]>=2.13.1",
     "pytest>=9.0.0",
     "ruff>=0.14.0",
 ]
