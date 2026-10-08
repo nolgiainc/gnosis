@@ -146,6 +146,7 @@ jobs:
           tip="$(gh api "repos/${{ github.repository }}/commits/main" --jq .sha)"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "sha_tag=${IMAGE}:sha-${SHA}" >> "$GITHUB_OUTPUT"
+          echo "apt_refresh=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
           if [ "$tip" = "$SHA" ]; then
             echo "promote=true" >> "$GITHUB_OUTPUT"
           else
@@ -160,6 +161,9 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.tags.outputs.sha_tag }}
+          # Re-runs the Dockerfile's apt upgrade layer at least daily, so the
+          # warm cache below cannot pin stale distro packages past a fix.
+          build-args: APT_REFRESH=${{ steps.tags.outputs.apt_refresh }}
           # Per-env scopes so the two matrix legs keep independent warm
           # caches instead of racing one scope.
           cache-from: type=gha,scope=gnosis-ar-${{ matrix.env }}

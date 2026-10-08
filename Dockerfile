@@ -4,7 +4,13 @@ FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim@sha256:531f855bda2c73cd6ef67d
 # openssl carried CRITICAL CVEs that bookworm-security had already fixed), and
 # CI's image scan fails on any CRITICAL with a fix available. Apply the
 # distro's security updates at build time so a stale base cannot ship them.
-RUN apt-get update \
+# APT_REFRESH (CI passes the UTC date) changes this layer's cache key daily:
+# the Artifact Registry build reuses a GitHub Actions layer cache, and without
+# it a cached upgrade layer kept serving packages that bookworm-security had
+# since fixed (2026-10-08: perl-base deb12u3, three CRITICALs).
+ARG APT_REFRESH=unset
+RUN echo "apt refresh: ${APT_REFRESH}" \
+    && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
